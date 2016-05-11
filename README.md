@@ -1,0 +1,2 @@
+# Stepwise-Logistic-Regression
+Use DepositData.csv dataset to answer the following questions:      - What are the key drivers of customer deposit amounts?     - Is there a short-term versus long term effect of education?     - Is there a benefit in increasing the number of products that a customer owns or is there a saturation effect? Additional Question     - What is the impact of missings in the data? What are some of the ways to handle it in this particular problem?
