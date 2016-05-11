@@ -1,0 +1,432 @@
+---
+title: "Deposit Assignment"
+author: "Krishna Mohan"
+date: "April 19, 2016"
+output: html_document
+---
+
+Use DepositData.csv dataset to answer the following questions:
+
+    - What are the key drivers of customer deposit amounts?
+    - Is there a short-term versus long term effect of education?
+    - Is there a benefit in increasing the number of products that a customer owns or is there a saturation effect?
+Additional Question
+    - What is the impact of missings in the data? What are some of the ways to handle it in this particular problem?
+
+```{r read_input_data}
+setwd("C:/Recovered Files/Krishna/PGPBA/Predictive Modeling")
+
+## Read input data file
+deposit = read.csv("DepositData1.csv", header = TRUE)
+```
+
+```{r data_investigation}
+str(deposit)
+
+summary(deposit)
+
+## Gender, Education and Product fields are factors - rest are intergers
+## Loyalty Index, Education and Salary fields have missing values
+
+## Investigate Integer Fields - Number of Products Owned
+range(deposit$Number.of.Products.Owned)   ## Customers own 0 to 12 products
+summary(deposit$Number.of.Products.Owned)
+
+## Investigate Integer Fields - Age
+range(deposit$Age)   ## Customers' age ranges from 12 to 117.  Need to perform outlier analysis
+summary(deposit$Age)
+
+## Investigate Integer Fields - Credit.Score
+range(deposit$Credit.Score)   ## Credit scores range from 405 to 969.  Within expected range - no surprises.
+summary(deposit$Credit.Score)
+
+## Investigate Integer Fields - Salary
+range(deposit$Salary)   ## Salary has NAs - need to perform Missing Value Analysis
+summary(deposit$Salary)
+
+## Investigate Integer Fields - Deposit.Amount
+range(deposit$Deposit.Amount)   ## Deposit Amounts range from 3897 to 10312.  Within expected range - no surprises.
+summary(deposit$Deposit.Amount)
+
+## Investigate Categorical Fields - Gender
+table(deposit$Gender)   ## No unusual pattern in Gender
+
+## Investigate Categorical Fields - Loyalty.Index
+table(deposit$Loyalty.Index)   ## Loyalty Index is on a scale from 1 to 10
+summary(deposit$Loyalty.Index) ## There are 15255 missing values in Loyalty Index. Missing Value Treatment required.
+
+## Investigate Categorical Fields - Product
+table(deposit$Product)   ## There are 3 types of Products - CD, MM, SAV
+
+## Investigate Categorical Fields - Education
+str(deposit$Education)   ## This is a character field.  Safe to convert to a factor.
+#deposit$Education = as.factor(deposit$Education)
+table(deposit$Education)  ## There are 5 levels, one of them being N/A.
+
+```
+###  Findings
+#### Age requires Outlier Analysis
+#### Salary, Education and Loyalty Index require Missing Values Treatment
+
+```{r missing_value_treatment_salary}
+## Missing Numeric Variables (Salary) - Predict values using Anova.  Here, I have assumed Loyalty.Index to be predictor variable although the objective is to determine impact on Deposit.Amount.  This gives us a better value to impute based on other variables.
+library(rpart)
+anova_mod <- rpart(Salary ~ . - Loyalty.Index, data=deposit[!is.na(deposit$Salary), ], method="anova", na.action=na.omit)
+salary_pred <- predict(anova_mod, deposit[is.na(deposit$Salary), ])
+
+## Create subset of records with missing Salary values
+sub_Salary_na = subset(deposit, (is.na(deposit$Salary)))
+summary(sub_Salary_na)
+sub_Salary_na$Salary = salary_pred  ## Populate missing Salary values with predicted Salary values
+
+## Create subset of records with good Salary values
+sub_Salary = subset(deposit, (!is.na(deposit$Salary)))
+summary(sub_Salary)
+
+## Join two subsets 
+library(plyr)
+deposit = join(sub_Salary, sub_Salary_na, by="Customer.ID", type="full")
+summary(deposit)
+
+```
+
+#### Using Anova method to impute missing values for Salary has worked well.  Summary comparison of means shows:
+* Mean Salary (Before imputting): 2354
+* Mean Salary (After imputting):  2341
+
+* Median Salary (Before imputting): 1970 
+* Median Salary (After imputting):  1944
+
+```{r missing_value_treatment_loyalty_index}
+## Missing Numeric Variables (Loyalty.Index) - Predict values using Anova.  Here, I have assumed Number.of.Products.Owned to be predictor variable although the objective is to determine impact on Deposit.Amount.  This gives us a better value to impute based on other variables.
+
+summary(deposit$Loyalty.Index)
+anova_mod <- rpart(Loyalty.Index ~ . - Number.of.Products.Owned, data=deposit[!is.na(deposit$Loyalty.Index), ], method="anova", na.action=na.omit)
+loyalty_pred = predict(anova_mod, deposit[is.na(deposit$Loyalty.Index), ])
+loyalty_pred = round(loyalty_pred,digits = 0)
+
+## Create subset of records with missing Loyalty.Index values
+sub_loyalty_na = subset(deposit, (is.na(deposit$Loyalty.Index)))
+summary(sub_loyalty_na)
+sub_loyalty_na$Loyalty.Index = loyalty_pred  ## Populate missing Salary values with predicted Salary values
+
+## Create subset of records with good Loyalty.Index values
+sub_loyalty = subset(deposit, (!is.na(deposit$Loyalty.Index)))
+summary(sub_loyalty)
+
+## Join two subsets 
+deposit = join(sub_loyalty, sub_loyalty_na, by="Customer.ID", type="full")
+summary(deposit)
+```
+
+#### Using Anova method to impute missing values for Loyalty.Index has worked well.  Summary comparison of means shows:
+* Mean Loyalty.Index (Before imputting): 8.005
+* Mean Loyalty.Index (After imputting):  7.975
+
+* Median Loyalty.Index (Before imputting): 8.000 
+* Median Loyalty.Index (After imputting):  8.000
+
+
+```{r impute_missing_Edu_values}
+table(deposit$Education)
+## Records with missing Education values have Age ranging from 12-18 yrs and Credit.Score is a constant value of 900.  It is safe to assume that these individuals have not yet graduated from High School and can be assigned a value of "No Degree"
+deposit$Education = as.character(deposit$Education)
+deposit$Education[deposit$Education == "N/A"] = "No Degree"
+deposit$Education = as.factor(deposit$Education)
+
+```
+
+```{r forward_stepwise_regression_aic}
+# INTERCEPT ONLY MODEL
+library(MASS)
+model.1 <- lm(Deposit.Amount~1,data=deposit)
+summary(model.1)    ## Intercept only: 7045.79
+
+deposit.fw = ~Number.of.Products.Owned + Age + Gender + Loyalty.Index + Education + Credit.Score + Salary + Product + Customer.ID
+add1(model.1,scope=deposit.fw,test="F")
+
+## Add Education based on lowest AIC
+summary(update(model.1, ~ . +Education))  ## M-R-Sq: 0.0833  A-R-Sq: 0.08327 (minimal difference)
+add1(update(model.1, ~ . +Education),scope=deposit.fw,test="F")
+
+## Add Gender based on lowest AIC
+summary(update(model.1, ~ . +Education+Gender))  ## M-R-Sq: 0.1594  A-R-Sq: 0.1594 (no difference)
+add1(update(model.1, ~ . +Education+Gender),scope=deposit.fw,test="F")
+
+## Add Credit.Score based on lowest AIC
+summary(update(model.1, ~ . +Education+Gender+Credit.Score))  ## M-R-Sq: 0.223  A-R-Sq: 0.2229 (no difference)
+add1(update(model.1, ~ . +Education+Gender+Credit.Score),scope=deposit.fw,test="F")
+
+## Add Loyalty.Index based on lowest AIC
+summary(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index))  ## M-R-Sq: 0.2855  A-R-Sq: 0.2855 (no difference)
+add1(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index),scope=deposit.fw,test="F")
+
+## Add Salary based on lowest AIC
+summary(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary))  ## M-R-Sq: 0.3319  A-R-Sq: 0.3319 (no difference)
+add1(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary),scope=deposit.fw,test="F")
+
+## Add Product based on lowest AIC
+summary(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product))  ## M-R-Sq: 0.3707  A-R-Sq: 0.3706
+add1(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product),scope=deposit.fw,test="F")
+
+## Add Number.of.Products.Owned based on lowest AIC
+summary(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product+Number.of.Products.Owned))  ## M-R-Sq: 0.3834  A-R-Sq: 0.3834
+add1(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product+Number.of.Products.Owned),scope=deposit.fw,test="F")
+
+## Finally add Age based on lowest AIC.  Customer.ID is not significant.
+summary(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product+Number.of.Products.Owned+Age))  ## M-R-Sq: 0.3844  A-R-Sq: 0.3844
+add1(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product+Number.of.Products.Owned+Age),scope=deposit.fw,test="F")
+
+## Finally add Customer.ID based on lowest AIC.  
+summary(update(model.1, ~ . +Education+Gender+Credit.Score+Loyalty.Index+Salary+Product+Number.of.Products.Owned+Age+Customer.ID))  ## M-R-Sq: 0.3844  A-R-Sq: 0.3844
+
+```
+
+#### Sequence of Forward Stepwise Regression using AIC (Most significant to Least significant):
+* Education
+* Gender
+* Credit.Score
+* Loyalty.Index
+* Salary
+* Product
+* Number.of.Products.Owned
+* Age
+#### Education has the highest significance
+
+
+
+
+```{r forward_stepwise_regression}
+# INTERCEPT ONLY MODEL
+library(MASS)
+model.1 <- lm(Deposit.Amount~1,data=deposit)
+summary(model.1)    ## Intercept only: 7045.79
+
+deposit.fw = ~Number.of.Products.Owned + Age + Gender + Loyalty.Index + Education + Credit.Score + Salary + Product + Customer.ID
+add1(model.1,scope=deposit.fw,test="F")
+
+## Add Gender based on F-Value
+summary(update(model.1, ~ . +Gender))  ## M-R-Sq: 0.07681  A-R-Sq: 0.0768 (minimal difference)
+add1(update(model.1, ~ . +Gender),scope=deposit.fw,test="F")
+
+## Add Loyalty.Index
+summary(update(model.1, ~ . +Gender+Loyalty.Index))  ## M-R-Sq: 0.1423  A-R-Sq: 0.1423 (no difference)
+add1(update(model.1, ~ . +Gender+Loyalty.Index),scope=deposit.fw,test="F")
+
+## Add Age based on F-Value
+summary(update(model.1, ~ . +Gender+Loyalty.Index+Age))  ## M-R-Sq: 0.2058  A-R-Sq: 0.2058 (no difference)
+add1(update(model.1, ~ . +Gender+Loyalty.Index+Age),scope=deposit.fw,test="F")
+
+## Add Salary based on F-Value
+summary(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary))  ## M-R-Sq: 0.2569  A-R-Sq: 0.2569 (no difference)
+add1(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary),scope=deposit.fw,test="F")
+
+## Add Product based on F-Value
+summary(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product))  ## M-R-Sq: 0.2948  A-R-Sq: 0.2948 (no difference)
+add1(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product),scope=deposit.fw,test="F")
+
+## Add Education based on F-Value
+summary(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product+Education))  ## M-R-Sq: 0.3416  A-R-Sq: 0.3415 (minimal difference)
+### Notice the significant jump in errors compared to previous model with addition of previous model.  Therefore, Education does have a significant impact on Deposit.Amount
+add1(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product+Education),scope=deposit.fw,test="F")
+
+## Add Credit.Score based on F-Value - Now Credit.Score has become significant
+summary(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product+Education+Credit.Score))  ## M-R-Sq: 0.3716  A-R-Sq: 0.3716 (no difference)
+add1(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product+Education+Credit.Score),scope=deposit.fw,test="F")
+
+## Finally add Number.of.Products.Owned based on F-Value.  Customer.ID is not significant.
+summary(update(model.1, ~ . +Gender+Loyalty.Index+Age+Salary+Product+Education+Credit.Score+Number.of.Products.Owned))  ## M-R-Sq: 0.3844  A-R-Sq: 0.3843 (no difference)
+
+```
+
+#### Sequence of Forward Stepwise Regression (Most significant to Least significant):
+* Gender
+* Loyalty.Index
+* Age
+* Salary
+* Product
+* Education
+* Credit.Score
+* Number.of.Products.Owned
+#### Education has relatively lower significance
+
+
+``` {r Backward_Stepwise_Regression_aic}
+
+## Start will all variables
+model.bw <- lm(Deposit.Amount~.,data=deposit)
+drop1(model.bw,test="F")
+
+## Drop Customer.ID based on lowest AIC (Makes sense)
+summary(update(model.bw, ~ . -Customer.ID))  ## M-R-Sq: 0.3844  A-R-Sq: 0.3843 (minimal difference)
+drop1(update(model.bw, ~ . -Customer.ID), test = "F")
+
+## Drop Age based on lowest AIC
+summary(update(model.bw, ~ . -Customer.ID-Age))  ## M-R-Sq: 0.3834  A-R-Sq: 0.3833 (minimal difference and minimal drop from previous model)
+drop1(update(model.bw, ~ . -Customer.ID-Age), test = "F")
+
+## Drop Number.of.Products.Owned based on lowest AIC
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned))  ## M-R-Sq: 0.3707  A-R-Sq: 0.3706
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned), test = "F")
+
+## Drop Product based on lowest AIC
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product))  ## M-R-Sq: 0.3319  A-R-Sq: 0.3319
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product), test = "F")
+
+## Drop Salary based on lowest AIC
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary))  ## M-R-Sq: 0.2855  A-R-Sq: 0.2855
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary), test = "F")
+
+## Drop Loyalty.Index based on lowest AIC
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index))  ## M-R-Sq: 0.223  A-R-Sq: 0.223
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index), test = "F")
+
+## Drop Credit.Score based on lowest AIC
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index-Credit.Score))  ## M-R-Sq: 0.1594  A-R-Sq: 0.1594
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index-Credit.Score), test = "F")
+
+## Drop Gender based on lowest AIC value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index-Credit.Score-Gender))  ## M-R-Sq: 0.1594  A-R-Sq: 0.1594
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index-Credit.Score-Gender), test = "F")
+
+## Finally, drop Education to reach Intercept Only model level
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Salary-Loyalty.Index-Credit.Score-Gender-Education))  ## Intercept 7045.79
+
+```
+
+
+
+``` {r Backward_Stepwise_Regression}
+
+## Start will all variables
+model.bw <- lm(Deposit.Amount~.,data=deposit)
+drop1(model.bw,test="F")
+
+## Drop Customer.ID (Makes sense)
+summary(update(model.bw, ~ . -Customer.ID))  ## M-R-Sq: 0.3844  A-R-Sq: 0.3843 (minimal difference)
+drop1(update(model.bw, ~ . -Customer.ID), test = "F")
+
+## Drop Age based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age))  ## M-R-Sq: 0.3834  A-R-Sq: 0.3833 (minimal difference and minimal drop from previous model)
+drop1(update(model.bw, ~ . -Customer.ID-Age), test = "F")
+
+## Drop Number.of.Products.Owned based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned))  ## M-R-Sq: 0.3707  A-R-Sq: 0.3706
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned), test = "F")
+
+## Drop Product based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product))  ## M-R-Sq: 0.3319  A-R-Sq: 0.3319
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product), test = "F")
+
+## Drop Education based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education))  ## M-R-Sq: 0.2061  A-R-Sq: 0.2061
+
+### Notice the significant drop in errors once Education is dropped - Therefore, Education does not significantly help in explaining the variation of dependent variable, namely Deposit.Amount
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education), test = "F")
+
+## Drop Credit.Score based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score))  ## M-R-Sq: 0.195  A-R-Sq: 0.195
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score), test = "F")
+
+## Drop Salary based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score-Salary))  ## M-R-Sq: 0.1423  A-R-Sq: 0.1423
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score-Salary), test = "F")
+
+## Drop Loyalty.Index based on F-Value
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score-Salary-Loyalty.Index))  ## M-R-Sq: 0.07681  A-R-Sq: 0.07681
+drop1(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score-Salary-Loyalty.Index), test = "F")
+
+## Finally, drop Gender to reach Intercept Only model level
+summary(update(model.bw, ~ . -Customer.ID-Age-Number.of.Products.Owned-Product-Education-Credit.Score-Salary-Loyalty.Index-Gender))  ## Intercept: 7045.79
+
+```
+
+#### Sequence of Backward Stepwise Regression (Least significant to Most significant):
+* Customer.ID
+* Age 
+* Number.of.Products.Owned
+* Product
+* Education
+* Credit.Score
+* Salary
+* Loyalty.Index
+* Gender
+#### Again Education has relatively lower significance
+
+
+
+```{r fast_backward_selection, echo=FALSE}
+# FAST BACKWARD SELECTION
+library(rms)
+full.model <- ols(Deposit.Amount ~ Gender+Loyalty.Index+Age+Salary+Product+Education+Credit.Score+Number.of.Products.Owned, data = deposit)
+fast.bw.model <- fastbw(full.model, rule = "aic")
+print(fast.bw.model,digits=3)
+fast.bw.model$names.kept
+
+```
+
+#### All the 8 variables were deemed significant using the Fast Backward Selection method.
+
+```{r auto_forward_selection}
+# AUTOMATED FORWARD SELECTION
+model.forward <- step(model.1,direction="forward",scope=deposit.fw, trace=1)
+model.forward$anova
+```
+
+#### Findings - Automatic-Forward-Selection
+  * This selection model uses Akaike Information Criteria (AIC) to determine the sequence of variables to be included in the model. 
+  * Education happens to be the variable that has the highest probability to minimize loss of information.
+  * To determine the probability of Gender minimizing the information loss compared to Education, exp((1330206-1321516)/2) returns Infinity, which is not very helpful.  Similar results for other models also.
+  * While this selection model is easy to use, it does not provide much insight into the selection process.
+  
+```{r auto_backward_selection}
+# AUTOMATED FORWARD SELECTION
+model.backward <- step(model.bw,direction="backward",scope=deposit.fw, trace=1)
+model.backward$anova
+
+```
+
+#### Findings - Automatic-Backward-Selection
+  * Again, Education happens to be the variable with the highest probability to minimize loss of information.
+  * While this selection model is easy to use, it does not provide much insight into the selection process.
+  
+```{r forward_backward_selection}
+model.both1 <- step(model.1, direction="both",scope=deposit.fw,trace=1)
+model.both1$anova
+```
+
+```{r backward_forward_selection_2}
+model.both2 <- step(model.bw, direction="both",scope=deposit.fw)  ## Using backward model
+model.both2$anova
+```
+
+```{r model_summaries}
+summary(model.forward)
+summary(model.backward)
+summary(model.both1)
+summary(model.both2)
+```
+
+***
+
+### Part 2 - Short/Long Term effect of Education
+
+Linear Regression equation for Education:
+  y = b0 + b1(Education2YR COLLEGE) + b2(EducationCOLLAGE) +b3(EducationGRAD DEGREE) + b4(EducationHIGH SCHOOL)
+  
+HYPOTHESIS:
+  H0: b1 = b2 = b3 = b4 = 0 (Short or Long Term Education are NOT significant on Deposit.Amount)
+  H1: b1 != b2 != b3 != b4 (Short or Long Term Education are significant on Deposit.Amount)
+
+
+```{r linear_reg_Education}
+lm_model1 = lm(Deposit.Amount ~ Education, data=deposit)
+summary(lm_model1)
+
+```
+
+Note that the F-statistic is 2272.  The p-value is almost 0.  Using alpha = 0.05,
+  p-value < alpha
+  Therefore, we can REJECT H0 and conclude that a significant relationship exists between Education level and Deposit Amount.
+
+
